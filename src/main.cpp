@@ -1,56 +1,87 @@
 #include <Arduino.h>
-#include <Wire.h>
+#include <SoftwareSerial.h>
+#include <WiFi.h>
+#include <ModbusRTU.h>
+
+//#region Modbus RTU
+
+#define SOFTWARE_SERIAL_TX_PIN          32
+#define SOFTWARE_SERIAL_RX_PIN          33
+#define SOFTWARE_SERIAL_BAUD_RATE       9600
+
+int modbusSlaveId = 1;
+SoftwareSerial softwareSerial;
+
+ModbusRTU modbusRtu;
+
+//#endregion
+
+//#region ECG
+
 
 #define PIN_LOW_NEGATIVE        2
-#define PIN_LOW_POSITIVE        3
-#define PIN_HEART_RATE_OUTPUT   A0
+#define PIN_LOW_POSITIVE        15
+#define PIN_HEART_RATE_OUTPUT   34
 
-// Function that executes whenever data is received from master
-void receiveEvent(int howMany) {
-    Wire.write("Hello world");
-    return;
-    Serial.println("(receiveEvent) start");
-    if ((digitalRead(PIN_LOW_POSITIVE) == 1) || (digitalRead(PIN_LOW_NEGATIVE) == 1)) {
-        Wire.write(-1);
-        Serial.print("ECG value = ");
-        Serial.println(-1);
-        return;
+
+float _ecgValue = 9999.0;
+unsigned long _measurementTime = 0;
+
+//#endregion
+
+
+void buildModbusRtuMessage() {
+
+    float localEcgValue = 9999.0;
+
+    if (!isnan(_ecgValue)) {
+        localEcgValue = _ecgValue;
     }
 
-    // send the value of analog input 0:
-    auto ecgValue = analogRead(PIN_HEART_RATE_OUTPUT);
-    Wire.write(ecgValue);
-    Serial.print("ECG value = ");
-    Serial.println(ecgValue);
+    uint16_t ecgRegisters[2];
+    memcpy(ecgRegisters, &localEcgValue, 4);
+
+    modbusRtu.removeHreg(0, 2);
+
+    modbusRtu.addHreg(0, ecgRegisters[0], 1);
+    modbusRtu.addHreg(1, ecgRegisters[1], 1);
 }
+
 
 void setup() {
 
-    // initialize the serial communication:
-    Serial.begin(9600);
+    Serial.begin(115200);
+    Serial.println(F("Start weather ..."));
 
-    Wire.onReceive(receiveEvent);
-    Wire.begin(0x08);
+    // Modbus RTU begin
+    softwareSerial.begin(SOFTWARE_SERIAL_BAUD_RATE, SWSERIAL_8N1, SOFTWARE_SERIAL_RX_PIN,
+                         SOFTWARE_SERIAL_TX_PIN, false, 95, 11);
 
+    modbusRtu.begin(&softwareSerial);
+    modbusRtu.slave(modbusSlaveId);
 
-    // write your initialization code here
-    pinMode(PIN_LOW_NEGATIVE, INPUT);
-    pinMode(PIN_LOW_POSITIVE, INPUT);
-
-    Serial.println("DONE");
-
+    buildModbusRtuMessage();
 }
 
 void loop() {
-//    if((digitalRead(PIN_LOW_POSITIVE) == 1)||(digitalRead(PIN_LOW_NEGATIVE) == 1)){
-//        Serial.println('!');
-//    }
-//    else{
-//
-////        analogSetAttenuation(ADC_11db);
-//        // send the value of analog input 0:
-//        Serial.println(analogRead(PIN_HEART_RATE_OUTPUT));
-//    }
-    //Wait for a bit to keep serial data from saturating
-//    delay(50);
+
+    auto measurementDelay = millis() - _measurementTime;
+    if (measurementDelay >= 100) {
+
+        _measurementTime = millis();
+
+        if ((digitalRead(PIN_LOW_POSITIVE) == 1) || (digitalRead(PIN_LOW_NEGATIVE) == 1)) {
+            Serial.println('!');
+            _ecgValue = 9999.0;
+        } else {
+            auto ecgValue = analogRead(PIN_HEART_RATE_OUTPUT);
+            _ecgValue = (float) ecgValue;
+            Serial.println(ecgValue);
+        }
+
+        buildModbusRtuMessage();
+    }
+
+    modbusRtu.task();
+    yield();
 }
