@@ -27,6 +27,8 @@ ModbusRTU modbusRtu;
 float _ecgValue = 9999.0;
 unsigned long _measurementTime = 0;
 
+TaskHandle_t _doMeasurementTask;
+
 //#endregion
 
 
@@ -47,6 +49,29 @@ void buildModbusRtuMessage() {
     modbusRtu.addHreg(1, ecgRegisters[1], 1);
 }
 
+// Do weather query from api.
+static void doMeasurement(void *parameter) {
+    while (true) {
+        auto measurementDelay = millis() - _measurementTime;
+        if (measurementDelay >= 300) {
+
+            _measurementTime = millis();
+
+            if ((digitalRead(PIN_LOW_POSITIVE) == 1) || (digitalRead(PIN_LOW_NEGATIVE) == 1)) {
+                Serial.println('!');
+                _ecgValue = 9999.0;
+            } else {
+                auto ecgValue = analogRead(PIN_HEART_RATE_OUTPUT);
+                _ecgValue = (float) ecgValue;
+                Serial.println(ecgValue);
+            }
+
+
+        }
+        vTaskDelay(20);
+    }
+}
+
 
 void setup() {
 
@@ -60,28 +85,21 @@ void setup() {
     modbusRtu.begin(&softwareSerial);
     modbusRtu.slave(modbusSlaveId);
 
+    xTaskCreatePinnedToCore(
+            doMeasurement,   /* Task function. */
+            "doMeasurement",     /* name of task. */
+            10000,       /* Stack size of task */
+            nullptr,        /* parameter of the task */
+            1,           /* priority of the task */
+            &_doMeasurementTask,      /* Task handle to keep track of created task */
+            0);          /* pin task to core 0 */
+
     buildModbusRtuMessage();
 }
 
 void loop() {
 
-    auto measurementDelay = millis() - _measurementTime;
-    if (measurementDelay >= 100) {
-
-        _measurementTime = millis();
-
-        if ((digitalRead(PIN_LOW_POSITIVE) == 1) || (digitalRead(PIN_LOW_NEGATIVE) == 1)) {
-            Serial.println('!');
-            _ecgValue = 9999.0;
-        } else {
-            auto ecgValue = analogRead(PIN_HEART_RATE_OUTPUT);
-            _ecgValue = (float) ecgValue;
-            Serial.println(ecgValue);
-        }
-
-        buildModbusRtuMessage();
-    }
-
+    buildModbusRtuMessage();
     modbusRtu.task();
     yield();
 }
